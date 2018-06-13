@@ -12,244 +12,196 @@
  * limitations under the License.
  */
 
-var orderStatus = {
-    Created: {code: 1, text: 'Order Created'},
-    Bought: {code: 2, text: 'Order Purchased'},
-    Cancelled: {code: 3, text: 'Order Cancelled'},
-    Ordered: {code: 4, text: 'Order Submitted to Provider'},
-    ShipRequest: {code: 5, text: 'Shipping Requested'},
-    Delivered: {code: 6, text: 'Order Delivered'},
-    Delivering: {code: 15, text: 'Order being Delivered'},
-    Backordered: {code: 7, text: 'Order Backordered'},
-    Dispute: {code: 8, text: 'Order Disputed'},
-    Resolve: {code: 9, text: 'Order Dispute Resolved'},
-    PayRequest: {code: 10, text: 'Payment Requested'},
-    Authorize: {code: 11, text: 'Payment Approved'},
-    Paid: {code: 14, text: 'Payment Processed'},
-    Refund: {code: 12, text: 'Order Refund Requested'},
-    Refunded: {code: 13, text: 'Order Refunded'}
-};
+/**
+ * A shipment has been received by an importer
+ * @param {org.acme.Z2BTestNetwork.ShipmentReceived} shipmentReceived - the ShipmentReceived transaction
+ * @transaction
+ */
+function payOut(shipmentReceived) {
+
+    var contract = shipmentReceived.shipment.contract;
+    var shipment = shipmentReceived.shipment;
+    var payOut = contract.unitPrice * shipment.unitCount;
+
+    console.log('Received at: ' + shipmentReceived.timestamp);
+    console.log('Contract arrivalDateTime: ' + contract.arrivalDateTime);
+
+    // set the status of the shipment
+    shipment.status = 'ARRIVED';
+
+    // if the shipment did not arrive on time the payout is zero
+    if (shipmentReceived.timestamp > contract.arrivalDateTime) {
+        payOut = 0;
+        console.log('Late shipment');
+    } else {
+        // find the lowest temperature reading
+        if (shipment.temperatureReadings) {
+            // sort the temperatureReadings by centigrade
+            shipment.temperatureReadings.sort(function (a, b) {
+                return (a.centigrade - b.centigrade);
+            });
+            var lowestReading = shipment.temperatureReadings[0];
+            var highestReading = shipment.temperatureReadings[shipment.temperatureReadings.length - 1];
+            var penalty = 0;
+            console.log('Lowest temp reading: ' + lowestReading.centigrade);
+            console.log('Highest temp reading: ' + highestReading.centigrade);
+
+            // does the lowest temperature violate the contract?
+            if (lowestReading.centigrade < contract.minTemperature) {
+                penalty += (contract.minTemperature - lowestReading.centigrade) * contract.minPenaltyFactor;
+                console.log('Min temp penalty: ' + penalty);
+            }
+
+            // does the highest temperature violate the contract?
+            if (highestReading.centigrade > contract.maxTemperature) {
+                penalty += (highestReading.centigrade - contract.maxTemperature) * contract.maxPenaltyFactor;
+                console.log('Max temp penalty: ' + penalty);
+            }
+
+            // apply any penalities
+            payOut -= (penalty * shipment.unitCount);
+
+            if (payOut < 0) {
+                payOut = 0;
+            }
+        }
+    }
+
+    console.log('Payout: ' + payOut);
+    contract.grower.accountBalance += payOut;
+    contract.importer.accountBalance -= payOut;
+
+    console.log('Grower: ' + contract.grower.$identifier + ' new balance: ' + contract.grower.accountBalance);
+    console.log('Importer: ' + contract.importer.$identifier + ' new balance: ' + contract.importer.accountBalance);
+
+    return getParticipantRegistry('org.acme.Z2BTestNetwork.Grower')
+        .then(function (growerRegistry) {
+            // update the grower's balance
+            return growerRegistry.update(contract.grower);
+        })
+        .then(function () {
+            return getParticipantRegistry('org.acme.Z2BTestNetwork.Importer');
+        })
+        .then(function (importerRegistry) {
+            // update the importer's balance
+            return importerRegistry.update(contract.importer);
+        })
+        .then(function () {
+            return getAssetRegistry('org.acme.Z2BTestNetwork.Shipment');
+        })
+        .then(function (shipmentRegistry) {
+            // update the state of the shipment
+            return shipmentRegistry.update(shipment);
+        });
+}
 
 /**
- * create an order to purchase
- * @param {org.acme.Z2BTestNetwork.CreateOrder} purchase - the order to be processed
+ * A temperature reading has been received for a shipment
+ * @param {org.acme.Z2BTestNetwork.TemperatureReading} temperatureReading - the TemperatureReading transaction
  * @transaction
  */
-function CreateOrder(purchase) {
-    purchase.order.buyer = purchase.buyer;
-    purchase.order.amount = purchase.amount;
-    purchase.order.financeCo = purchase.financeCo;
-    purchase.order.created = new Date().toISOString();
-    purchase.order.status = JSON.stringify(orderStatus.Created);
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
+function temperatureReading(temperatureReading) {
+
+    var shipment = temperatureReading.shipment;
+    var NS = 'org.acme.Z2BTestNetwork';
+
+    console.log('Adding temperature ' + temperatureReading.centigrade + ' to shipment ' + shipment.$identifier);
+
+    if (shipment.temperatureReadings) {
+        shipment.temperatureReadings.push(temperatureReading);
+    } else {
+        shipment.temperatureReadings = [temperatureReading];
+    }
+
+    return getAssetRegistry(NS + '.Shipment')
+        .then(function (shipmentRegistry) {
+            // add the temp reading to the shipment
+            return shipmentRegistry.update(shipment);
         });
 }
+
 /**
- * Record a request to purchase
- * @param {org.acme.Z2BTestNetwork.Buy} purchase - the order to be processed
+ * Initialize some test assets and participants useful for running a demo.
+ * @param {org.acme.Z2BTestNetwork.SetupDemo} setupDemo - the SetupDemo transaction
  * @transaction
  */
-function Buy(purchase1) {
-    if (purchase.order.status = JSON.stringify(orderStatus.Created))
-    {
-        purchase.order.buyer = purchase1.buyer;
-        purchase.order.seller = purchase1.seller;
-        purchase.order.bought = new Date().toISOString();
-        purchase.order.status = JSON.stringify(orderStatus.Bought);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase1.order);
-            });
-        }
-}
-/**
- * Record a request to cancel an order
- * @param {org.acme.Z2BTestNetwork.OrderCancel} purchase - the order to be processed
- * @transaction
- */
-function OrderCancel(purchase) {
-    if ((purchase.order.status = JSON.stringify(orderStatus.Created)) || (purchase.order.status = JSON.stringify(orderStatus.Bought)))
-    {
-        purchase.order.buyer = purchase.buyer;
-        purchase.order.seller = purchase.seller;
-        purchase.order.cancelled = new Date().toISOString();
-        purchase.order.status = JSON.stringify(orderStatus.Cancelled);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase.order);
-            });
-        }
-}
-/**
- * Record a request to order by seller from supplier
- * @param {org.acme.Z2BTestNetwork.OrderFromSupplier} purchase - the order to be processed
- * @transaction
- */
-function OrderFromSupplier(purchase) {
-    if (purchase.order.status = JSON.stringify(orderStatus.Bought))
-    {
-        purchase.order.provider = purchase.provider;
-        purchase.order.ordered = new Date().toISOString();
-        purchase.order.status = JSON.stringify(orderStatus.Ordered);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase.order);
-            });
-        }
-}
-/**
- * Record a request to ship by supplier to shipper
- * @param {org.acme.Z2BTestNetwork.RequestShipping} purchase - the order to be processed
- * @transaction
- */
-function RequestShipping(purchase) {
-    if (purchase.order.status = JSON.stringify(orderStatus.Ordered))
-    {
-        purchase.order.shipper = purchase.shipper;
-        purchase.order.requestShipment = new Date().toISOString();
-        purchase.order.status = JSON.stringify(orderStatus.ShipRequest);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase.order);
-            });
-        }
-}
-/**
- * Record a delivery by shipper
- * @param {org.acme.Z2BTestNetwork.Delivering} purchase - the order to be processed
- * @transaction
- */
-function Delivering(purchase) {
-    if ((purchase.order.status = JSON.stringify(orderStatus.ShipRequest)) || (JSON.parse(purchase.order.status).code = orderStatus.Delivering.code))
-    {
-        purchase.order.delivering = new Date().toISOString();
-        var _status = orderStatus.Delivering;
-        _status.text += '  '+purchase.deliveryStatus;
-        purchase.order.status = JSON.stringify(_status);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase.order);
-            });
-        }
-}
-/**
- * Record a delivery by shipper
- * @param {org.acme.Z2BTestNetwork.Deliver} purchase - the order to be processed
- * @transaction
- */
-function Deliver(purchase) {
-    if ((purchase.order.status = JSON.stringify(orderStatus.ShipRequest)) || (JSON.parse(purchase.order.status).code = orderStatus.Delivering.code))
-    {
-        purchase.order.delivered = new Date().toISOString();
-        purchase.order.status = JSON.stringify(orderStatus.Delivered);
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-            .then(function (assetRegistry) {
-                return assetRegistry.update(purchase.order);
-            });
-        }
-}
- /**
- * Record a request for payment by the seller
- * @param {org.acme.Z2BTestNetwork.RequestPayment} purchase - the order to be processed
- * @transaction
- */
-function RequestPayment(purchase) {
-    if ((JSON.parse(purchase.order.status).text == orderStatus.Delivered.text) || (JSON.parse(purchase.order.status).text == orderStatus.Resolve.text))
-        {purchase.order.status = JSON.stringify(orderStatus.PayRequest);
-        purchase.order.financeCo = purchase.financeCo;
-        purchase.order.paymentRequested = new Date().toISOString();
-        }
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Record a payment to the seller
- * @param {org.acme.Z2BTestNetwork.AuthorizePayment} purchase - the order to be processed
- * @transaction
- */
-function AuthorizePayment(purchase) {
-    if ((JSON.parse(purchase.order.status).text == orderStatus.PayRequest.text ) || (JSON.parse(purchase.order.status).text == orderStatus.Resolve.text ))
-    {purchase.order.status = JSON.stringify(orderStatus.Authorize);
-        purchase.order.approved = new Date().toISOString();
-        }
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Record a payment to the seller
- * @param {org.acme.Z2BTestNetwork.Pay} purchase - the order to be processed
- * @transaction
- */
-function Pay(purchase) {
-    if (JSON.parse(purchase.order.status).text == orderStatus.Authorize.text )
-        {purchase.order.status = JSON.stringify(orderStatus.Paid);
-        purchase.order.paid = new Date().toISOString();
-        }
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Record a dispute by the buyer
- * @param {org.acme.Z2BTestNetwork.Dispute} purchase - the order to be processed
- * @transaction
- */
-function Dispute(purchase) {
-        purchase.order.status = JSON.stringify(orderStatus.Dispute);
-        purchase.order.dispute = purchase.dispute;
-        purchase.order.disputeOpened = new Date().toISOString();
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Resolve a seller initiated dispute
- * @param {org.acme.Z2BTestNetwork.Resolve} purchase - the order to be processed
- * @transaction
- */
-function Resolve(purchase) {
-        purchase.order.status = JSON.stringify(orderStatus.Resolve);
-        purchase.order.resolve = purchase.resolve;
-        purchase.order.disputeResolved = new Date().toISOString();
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Record a refund to the buyer
- * @param {org.acme.Z2BTestNetwork.Refund} purchase - the order to be processed
- * @transaction
- */
-function Refund(purchase) {
-        purchase.order.status = JSON.stringify(orderStatus.Refund);
-        purchase.order.refund = purchase.refund;
-        purchase.order.orderRefunded = new Date().toISOString();
-    return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
-        });
-}
- /**
- * Record a backorder by the supplier
- * @param {org.acme.Z2BTestNetwork.BackOrder} purchase - the order to be processed
- * @transaction
- */
-function BackOrder(purchase) {
-        purchase.order.status = JSON.stringify(orderStatus.Backordered);
-        purchase.order.backorder = purchase.backorder;
-        purchase.order.dateBackordered = new Date().toISOString();
-        purchase.order.provider = purchase.provider;
-        return getAssetRegistry('org.acme.Z2BTestNetwork.Order')
-        .then(function (assetRegistry) {
-            return assetRegistry.update(purchase.order);
+function setupDemo(setupDemo) {
+
+    var factory = getFactory();
+    var NS = 'org.acme.Z2BTestNetwork';
+
+    // create the grower
+    var grower = factory.newResource(NS, 'Grower', 'farmer@email.com');
+    var growerAddress = factory.newConcept(NS, 'Address');
+    growerAddress.country = 'USA';
+    grower.address = growerAddress;
+    grower.accountBalance = 0;
+
+    // create the importer
+    var importer = factory.newResource(NS, 'Importer', 'supermarket@email.com');
+    var importerAddress = factory.newConcept(NS, 'Address');
+    importerAddress.country = 'UK';
+    importer.address = importerAddress;
+    importer.accountBalance = 0;
+
+    // create the shipper
+    var shipper = factory.newResource(NS, 'Shipper', 'shipper@email.com');
+    var shipperAddress = factory.newConcept(NS, 'Address');
+    shipperAddress.country = 'Panama';
+    shipper.address = shipperAddress;
+    shipper.accountBalance = 0;
+
+    // create the contract
+    var contract = factory.newResource(NS, 'Contract', 'CON_001');
+    contract.grower = factory.newRelationship(NS, 'Grower', 'farmer@email.com');
+    contract.importer = factory.newRelationship(NS, 'Importer', 'supermarket@email.com');
+    contract.shipper = factory.newRelationship(NS, 'Shipper', 'shipper@email.com');
+    var tomorrow = setupDemo.timestamp;
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    contract.arrivalDateTime = tomorrow; // the shipment has to arrive tomorrow
+    contract.unitPrice = 0.5; // pay 50 cents per unit
+    contract.minTemperature = 2; // min temperature for the cargo
+    contract.maxTemperature = 10; // max temperature for the cargo
+    contract.minPenaltyFactor = 0.2; // we reduce the price by 20 cents for every degree below the min temp
+    contract.maxPenaltyFactor = 0.1; // we reduce the price by 10 cents for every degree above the max temp
+
+    // create the shipment
+    var shipment = factory.newResource(NS, 'Shipment', 'SHIP_001');
+    shipment.type = 'BANANAS';
+    shipment.status = 'IN_TRANSIT';
+    shipment.unitCount = 5000;
+    shipment.contract = factory.newRelationship(NS, 'Contract', 'CON_001');
+    return getParticipantRegistry(NS + '.Grower')
+        .then(function (growerRegistry) {
+            // add the growers
+            return growerRegistry.addAll([grower]);
+        })
+        .then(function() {
+            return getParticipantRegistry(NS + '.Importer');
+        })
+        .then(function(importerRegistry) {
+            // add the importers
+            return importerRegistry.addAll([importer]);
+        })
+        .then(function() {
+            return getParticipantRegistry(NS + '.Shipper');
+        })
+        .then(function(shipperRegistry) {
+            // add the shippers
+            return shipperRegistry.addAll([shipper]);
+        })
+        .then(function() {
+            return getAssetRegistry(NS + '.Contract');
+        })
+        .then(function(contractRegistry) {
+            // add the contracts
+            return contractRegistry.addAll([contract]);
+        })
+        .then(function() {
+            return getAssetRegistry(NS + '.Shipment');
+        })
+        .then(function(shipmentRegistry) {
+            // add the shipments
+            return shipmentRegistry.addAll([shipment]);
         });
 }

@@ -1,131 +1,123 @@
 /**
- * Zero To Blockchain multi-party finance network
+ * 
  */
 namespace org.acme.Z2BTestNetwork
-import composer.base.*
-import composer.events.*
 
-participant Buyer identified by buyerID extends Member{
-    o String buyerID
-}
-participant Seller identified by sellerID extends Member{
-    o String sellerID
-}
-participant Shipper identified by shipperID extends Member {
-    o String shipperID
-}
-participant Provider identified by providerID extends Member {
-    o String providerID
-}
-participant FinanceCo identified by financeCoID extends Member {
-    o String financeCoID
+
+/**
+ * The type of perishable product being shipped
+ */
+enum ProductType {
+  o BANANAS
+  o APPLES
+  o PEARS
+  o PEACHES
+  o COFFEE
 }
 
-asset Order identified by orderNumber {
-    o String orderNumber
-    o String[] items
-    o String status
-    o String dispute
-    o String resolve
-    o String backorder
-    o String refund
-    o Integer amount
-    o String created
-    o String bought
-    o String cancelled
-    o String ordered
-    o String dateBackordered
-    o String requestShipment
-    o String delivered
-    o String delivering
-    o String disputeOpened
-    o String disputeResolved
-    o String paymentRequested
-    o String orderRefunded
-    o String approved
-    o String paid
-    --> Provider provider
-    --> Shipper shipper
-    --> Buyer buyer
-    --> Seller seller 
-    --> FinanceCo financeCo 
+/**
+ * The status of a shipment
+ */
+enum ShipmentStatus {
+  o CREATED
+  o IN_TRANSIT
+  o ARRIVED
+}
 
+/**
+ * An abstract transaction that is related to a Shipment
+ */
+abstract transaction ShipmentTransaction {
+    --> Shipment shipment
 }
-  transaction CreateOrder {
-    o Integer amount
-    --> Order order
-    --> Buyer buyer
-    --> Seller seller
-    --> FinanceCo financeCo
+
+/**
+ * An temperature reading for a shipment. E.g. received from a
+ * device within a temperature controlled shipping container
+ */
+transaction TemperatureReading extends ShipmentTransaction {
+  o Double centigrade
 }
-  transaction OrderCancel {
-    --> Order order
-    --> Buyer buyer
-    --> Seller seller
+
+/**
+ * A notification that a shipment has been received by the
+ * importer and that funds should be transferred from the importer
+ * to the grower to pay for the shipment.
+ */
+transaction ShipmentReceived extends ShipmentTransaction {
 }
-  transaction Buy {
-    --> Order order
-    --> Buyer buyer
-    --> Seller seller
+
+/**
+ * A shipment being tracked as an asset on the ledger
+ */
+asset Shipment identified by shipmentId {
+  o String shipmentId
+  o ProductType type
+  o ShipmentStatus status
+  o Long unitCount
+  o TemperatureReading[] temperatureReadings optional
+  --> Contract contract
 }
-  transaction OrderFromSupplier {
-    --> Order order
-    --> Provider provider
-    --> Seller seller
+
+/**
+ * Defines a contract between a Grower and an Importer to ship using
+ * a Shipper, paying a set unit price. The unit price is multiplied by
+ * a penality factor proportional to the deviation from the min and max
+ * negociated temperatures for the shipment.
+ */
+asset Contract identified by contractId {
+  o String contractId
+  --> Grower grower
+  --> Shipper shipper
+  --> Importer importer
+  o DateTime arrivalDateTime
+  o Double unitPrice
+  o Double minTemperature
+  o Double maxTemperature
+  o Double minPenaltyFactor
+  o Double maxPenaltyFactor
 }
-  transaction RequestShipping {
-    --> Order order
-    --> Shipper shipper
-    --> Provider provider
+
+/**
+ * A concept for a simple street address
+ */
+concept Address {
+  o String city optional
+  o String country
+  o String street optional
+  o String zip optional
 }
-  transaction Deliver {
-    --> Order order
-    --> Shipper shipper
+
+/**
+ * An abstract participant type in this business network
+ */
+abstract participant Business identified by email {
+  o String email
+  o Address address
+  o Double accountBalance
 }
-  transaction Delivering {
-    o String deliveryStatus
-    --> Order order
-    --> Shipper shipper
+
+/**
+ * A Grower is a type of participant in the network
+ */
+participant Grower extends Business {
 }
-  transaction BackOrder {
-    o String backorder
-    --> Order order
-    --> Provider provider
+
+/**
+ * A Shipper is a type of participant in the network
+ */
+participant Shipper extends Business {
 }
-  transaction Dispute {
-    o String dispute
-    --> Order order
-    --> Buyer buyer
-    --> Seller seller
-    --> FinanceCo financeCo
+
+/**
+ * An Importer is a type of participant in the network
+ */
+participant Importer extends Business {
 }
-  transaction Resolve {
-    o String resolve
-    --> Order order
-    --> Buyer buyer
-    --> Seller seller
-    --> Shipper shipper
-    --> Provider provider
-    --> FinanceCo financeCo
+
+/**
+ * JUST FOR INITIALIZING A DEMO
+ */
+transaction SetupDemo {
 }
-  transaction RequestPayment {
-    --> Order order
-    --> Seller seller
-    --> FinanceCo financeCo
-}
-  transaction AuthorizePayment {
-    --> Order order
-    --> Buyer buyer
-    --> FinanceCo financeCo
-}
-  transaction Pay {
-    --> Order order
-    --> Seller seller
-    --> FinanceCo financeCo
-}
-  transaction Refund {
-    o String refund
-    --> Order order
-    --> Seller seller
-    --> FinanceCo financeCo
-}
+
